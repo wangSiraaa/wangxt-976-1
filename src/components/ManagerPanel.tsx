@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { classNames, formatDateTime, formatCurrency, formatCountdown } from '@/lib/utils';
+import { classNames, formatDateTime, formatCurrency, formatCountdown, formatTime } from '@/lib/utils';
 import { getStatusLabel, getStatusColor } from '@/lib/stateMachine';
 import { useCountdown } from '@/hooks/useCountdown';
-import type { Order, ApprovalRecord, ExceptionRecord } from '@/types';
+import type { Order, ApprovalRecord, ExceptionRecord, PeakHourReservation } from '@/types';
 import {
   Clock,
   AlertTriangle,
@@ -18,6 +18,14 @@ import {
   AlertOctagon,
   ChevronDown,
   ChevronUp,
+  MapPin,
+  Plus,
+  Trash2,
+  ToggleLeft,
+  ToggleRight,
+  Package,
+  Users,
+  ChefHat,
 } from 'lucide-react';
 
 const approvalTypeLabels: Record<string, string> = {
@@ -36,13 +44,30 @@ export default function ManagerPanel() {
     resolveException,
     executeOrderOperation,
     rooms,
+    peakHourReservations,
+    createPeakHourReservation,
+    togglePeakHourReservation,
+    deletePeakHourReservation,
+    menuItemStocks,
   } = useAppStore();
 
-  const [activeTab, setActiveTab] = useState<'approvals' | 'exceptions' | 'monitor'>('approvals');
+  const [activeTab, setActiveTab] = useState<'approvals' | 'exceptions' | 'monitor' | 'peak'>('approvals');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [showPeakModal, setShowPeakModal] = useState(false);
+  const [peakForm, setPeakForm] = useState({
+    roomId: '',
+    date: new Date().toISOString().split('T')[0],
+    startTime: '18:00',
+    endTime: '20:00',
+    reason: '',
+  });
 
   const pendingApprovals = approvalRecords.filter((a) => a.status === 'pending');
   const pendingExceptions = exceptionRecords.filter((e) => e.status === 'pending' || e.status === 'handling');
+  const activePeakReservations = peakHourReservations.filter((p) => p.isActive);
+  const warningStocks = menuItemStocks.filter(
+    (s) => s.isStockManaged && s.availableStock <= s.warningThreshold
+  );
 
   const monitoredOrders = orders.filter((o) =>
     ['confirmed', 'locked', 'min_consumption_pending', 'arrived', 'consuming'].includes(o.status)
@@ -73,6 +98,27 @@ export default function ManagerPanel() {
     }
   };
 
+  const handleCreatePeakReservation = () => {
+    if (!peakForm.roomId || !peakForm.date || !peakForm.startTime || !peakForm.endTime) {
+      alert('请填写完整信息');
+      return;
+    }
+    const room = rooms.find((r) => r.id === peakForm.roomId);
+    createPeakHourReservation({
+      ...peakForm,
+      roomName: room?.name || '',
+      isActive: true,
+    });
+    setShowPeakModal(false);
+    setPeakForm({
+      roomId: '',
+      date: new Date().toISOString().split('T')[0],
+      startTime: '18:00',
+      endTime: '20:00',
+      reason: '',
+    });
+  };
+
   return (
     <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden h-full flex flex-col">
       <div className="px-6 py-4 border-b border-gray-100">
@@ -97,6 +143,12 @@ export default function ManagerPanel() {
               <div className="flex items-center gap-1 px-3 py-1 bg-red-100 text-red-700 rounded-full">
                 <AlertTriangle className="w-4 h-4" />
                 <span className="font-medium">{pendingExceptions.length} 待处理</span>
+              </div>
+            )}
+            {warningStocks.length > 0 && (
+              <div className="flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full">
+                <Package className="w-4 h-4" />
+                <span className="font-medium">{warningStocks.length} 库存预警</span>
               </div>
             )}
           </div>
@@ -139,6 +191,20 @@ export default function ManagerPanel() {
             )}
           >
             订单监控
+          </button>
+          <button
+            onClick={() => setActiveTab('peak')}
+            className={classNames(
+              'flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all',
+              activeTab === 'peak' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            )}
+          >
+            高峰保留
+            {activePeakReservations.length > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.5 bg-purple-500 text-white text-xs rounded-full">
+                {activePeakReservations.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -209,6 +275,121 @@ export default function ManagerPanel() {
                   onConfirmMinConsumption={handleConfirmMinConsumption}
                 />
               ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'peak' && (
+          <div className="p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-gray-700">高峰时段保留</h4>
+              <button
+                onClick={() => setShowPeakModal(true)}
+                className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                新增保留
+              </button>
+            </div>
+
+            {peakHourReservations.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <MapPin className="w-12 h-12 mx-auto mb-2 opacity-40" />
+                <p>暂无高峰保留设置</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {peakHourReservations
+                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                  .map((reservation) => (
+                    <PeakReservationCard
+                      key={reservation.id}
+                      reservation={reservation}
+                      onToggle={() => togglePeakHourReservation(reservation.id)}
+                      onDelete={() => {
+                        if (confirm('确定删除此高峰保留？')) {
+                          deletePeakHourReservation(reservation.id);
+                        }
+                      }}
+                    />
+                  ))}
+              </div>
+            )}
+
+            {showPeakModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">新增高峰保留</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">选择包厢</label>
+                      <select
+                        value={peakForm.roomId}
+                        onChange={(e) => setPeakForm({ ...peakForm, roomId: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      >
+                        <option value="">请选择包厢</option>
+                        {rooms.map((room) => (
+                          <option key={room.id} value={room.id}>{room.name} ({room.capacity}人)</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">日期</label>
+                      <input
+                        type="date"
+                        value={peakForm.date}
+                        onChange={(e) => setPeakForm({ ...peakForm, date: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+                        <input
+                          type="time"
+                          value={peakForm.startTime}
+                          onChange={(e) => setPeakForm({ ...peakForm, startTime: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
+                        <input
+                          type="time"
+                          value={peakForm.endTime}
+                          onChange={(e) => setPeakForm({ ...peakForm, endTime: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">保留原因</label>
+                      <input
+                        type="text"
+                        value={peakForm.reason}
+                        onChange={(e) => setPeakForm({ ...peakForm, reason: e.target.value })}
+                        placeholder="例如：VIP客户预留、节日高峰等"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={() => setShowPeakModal(false)}
+                      className="flex-1 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={handleCreatePeakReservation}
+                      className="flex-1 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors"
+                    >
+                      确认创建
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -600,6 +781,87 @@ function MonitorOrderCard({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function PeakReservationCard({
+  reservation,
+  onToggle,
+  onDelete,
+}: {
+  reservation: PeakHourReservation;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className={classNames(
+      'border rounded-xl p-4 transition-all',
+      reservation.isActive ? 'border-purple-200 bg-purple-50/30' : 'border-gray-200 bg-gray-50/50 opacity-70'
+    )}>
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
+          <div className={classNames(
+            'w-10 h-10 rounded-xl flex items-center justify-center',
+            reservation.isActive ? 'bg-purple-100' : 'bg-gray-200'
+          )}>
+            <MapPin className={classNames(
+              'w-5 h-5',
+              reservation.isActive ? 'text-purple-600' : 'text-gray-400'
+            )} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-900">{reservation.roomName}</span>
+              {reservation.isActive ? (
+                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
+                  生效中
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs rounded-full">
+                  已停用
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {reservation.date} {reservation.startTime} - {reservation.endTime}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onToggle}
+            className="p-1.5 rounded-lg hover:bg-white/80 transition-colors"
+          >
+            {reservation.isActive ? (
+              <ToggleRight className="w-5 h-5 text-purple-600" />
+            ) : (
+              <ToggleLeft className="w-5 h-5 text-gray-400" />
+            )}
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+      {reservation.reason && (
+        <div className="mt-3 pt-3 border-t border-gray-200/50">
+          <div className="flex items-start gap-2">
+            <FileText className="w-4 h-4 text-gray-400 mt-0.5" />
+            <div>
+              <p className="text-xs text-gray-500">保留原因</p>
+              <p className="text-sm text-gray-700">{reservation.reason}</p>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
+        <span>创建人: {reservation.createdBy}</span>
+        <span>{formatDateTime(reservation.createdAt)}</span>
+      </div>
     </div>
   );
 }

@@ -257,6 +257,59 @@ export interface ExceptionRecord {
   resolution?: string;
 }
 
+// 菜品库存
+export interface MenuItemStock {
+  menuItemId: string;
+  name: string;
+  category: string;
+  totalStock: number;
+  lockedStock: number;
+  availableStock: number;
+  unit: string;
+  warningThreshold: number;
+  prepTimeMinutes: number;
+  isStockManaged: boolean;
+}
+
+// 库存锁定记录
+export interface StockLockRecord {
+  id: string;
+  orderId: string;
+  menuItemId: string;
+  menuItemName: string;
+  quantity: number;
+  status: 'locked' | 'released' | 'consumed';
+  lockedAt: number;
+  releasedAt?: number;
+  reason: string;
+}
+
+// 备餐时间线节点
+export interface PrepTimelineNode {
+  id: string;
+  kitchenOrderId: string;
+  itemId: string;
+  itemName: string;
+  status: 'waiting' | 'prepping' | 'cooking' | 'plating' | 'ready' | 'served';
+  estimatedTime: number;
+  actualTime?: number;
+  durationMinutes: number;
+}
+
+// 高峰保留配置
+export interface PeakHourReservation {
+  id: string;
+  roomId: string;
+  roomName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  reason: string;
+  createdBy: string;
+  createdAt: number;
+  isActive: boolean;
+}
+
 // 厨房备餐
 export interface KitchenOrder {
   id: string;
@@ -268,6 +321,10 @@ export interface KitchenOrder {
   priority: 'normal' | 'urgent';
   createdAt: number;
   estimatedReadyTime?: number;
+  startedAt?: number;
+  readyAt?: number;
+  servedAt?: number;
+  prepTimeline?: PrepTimelineNode[];
 }
 
 // 订单主表
@@ -328,4 +385,41 @@ export interface StateTransition {
   event: OperationType;
   condition?: (order: Order, payload?: Record<string, unknown>) => boolean;
   action?: (order: Order, payload?: Record<string, unknown>) => Partial<Order>;
+}
+
+// 操作影响 - 三维时间轴数据
+export interface OperationImpact {
+  operationLogId: string;
+  orderId: string;
+  timestamp: number;
+  operationType: OperationType;
+  operatorName: string;
+  operatorRole: RoleType;
+  remark?: string;
+  
+  // 包厢容量影响
+  roomImpact: {
+    roomId: string;
+    roomName: string;
+    capacityChange: number;
+    capacityAfter: number;
+    statusChange?: string;
+  };
+  
+  // 厨房备餐影响
+  kitchenImpact: {
+    itemsAdded?: { name: string; quantity: number; prepTime: number }[];
+    itemsRemoved?: { name: string; quantity: number; prepTime: number }[];
+    prepTimeChange: number;
+    totalPrepTimeAfter: number;
+    orderStatusChange?: string;
+  };
+  
+  // 收银余额影响
+  financeImpact: {
+    amountChange: number;
+    balanceAfter: number;
+    financeType?: FinanceType;
+    direction: 'in' | 'out' | 'neutral';
+  };
 }

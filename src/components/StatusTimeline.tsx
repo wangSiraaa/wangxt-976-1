@@ -2,7 +2,21 @@ import { useAppStore } from '@/store/appStore';
 import { getStatusLabel } from '@/lib/stateMachine';
 import type { Order } from '../types';
 import { formatDateTime, classNames } from '@/lib/utils';
-import { Circle, CheckCircle2, Clock, Lock, User, ChefHat } from 'lucide-react';
+import {
+  Circle,
+  CheckCircle2,
+  Clock,
+  Lock,
+  User,
+  ChefHat,
+  Users,
+  UtensilsCrossed,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  ChefHat as ChefHatIcon,
+} from 'lucide-react';
 
 interface StatusTimelineProps {
   order: Order;
@@ -33,8 +47,9 @@ const statusFlow = [
 ];
 
 export default function StatusTimeline({ order, compact = false }: StatusTimelineProps) {
-  const { operationLogs } = useAppStore();
+  const { operationLogs, getOperationImpacts } = useAppStore();
   const logs = operationLogs.filter((l) => l.orderId === order.id).sort((a, b) => a.timestamp - b.timestamp);
+  const impacts = getOperationImpacts(order.id);
 
   const currentIndex = statusFlow.indexOf(order.status);
 
@@ -131,15 +146,35 @@ export default function StatusTimeline({ order, compact = false }: StatusTimelin
         </div>
       </div>
 
-      {/* 操作流水 */}
+      {/* 操作流水 & 三维影响 */}
       {!compact && (
         <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-4">操作流水</h4>
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-sm font-semibold text-gray-700">操作流水</h4>
+            <div className="flex items-center gap-3 text-xs">
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-blue-500" />
+                <span className="text-gray-500">包厢容量</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-orange-500" />
+                <span className="text-gray-500">厨房备餐</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-green-500" />
+                <span className="text-gray-500">收银余额</span>
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-3">
           {logs.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-4">暂无操作记录</p>
           ) : (
-            logs.map((log, index) => (
+            logs.map((log, index) => {
+              const impact = impacts.find((i) => i.operationLogId === log.id);
+
+              return (
               <div key={log.id} className="flex gap-3">
                 <div className="flex flex-col items-center">
                   <div
@@ -179,9 +214,115 @@ export default function StatusTimeline({ order, compact = false }: StatusTimelin
                   {log.remark && (
                     <p className="text-xs text-gray-500 mt-1">{log.remark}</p>
                   )}
+
+                  {/* 三维影响卡片 */}
+                  {impact && (
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      {/* 包厢容量影响 */}
+                      <div className="bg-blue-50 rounded-lg p-2">
+                        <div className="flex items-center gap-1 text-blue-700 mb-1">
+                          <Users className="w-3 h-3" />
+                          <span className="text-xs font-medium">包厢容量</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {impact.roomImpact.capacityChange > 0 ? (
+                            <TrendingDown className="w-3 h-3 text-green-600" />
+                          ) : impact.roomImpact.capacityChange < 0 ? (
+                            <TrendingUp className="w-3 h-3 text-red-600" />
+                          ) : (
+                            <Minus className="w-3 h-3 text-gray-400" />
+                          )}
+                          <span
+                            className={classNames(
+                              'text-sm font-semibold',
+                              impact.roomImpact.capacityChange > 0
+                                ? 'text-green-600'
+                                : impact.roomImpact.capacityChange < 0
+                                ? 'text-red-600'
+                                : 'text-gray-500'
+                            )}
+                          >
+                            {impact.roomImpact.capacityChange > 0 ? '+' : ''}
+                            {impact.roomImpact.capacityChange}人
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-blue-600 mt-0.5">
+                          剩余 {impact.roomImpact.capacityAfter} 位
+                        </div>
+                      </div>
+
+                      {/* 厨房备餐影响 */}
+                      <div className="bg-orange-50 rounded-lg p-2">
+                        <div className="flex items-center gap-1 text-orange-700 mb-1">
+                          <ChefHatIcon className="w-3 h-3" />
+                          <span className="text-xs font-medium">厨房备餐</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {impact.kitchenImpact.prepTimeChange > 0 ? (
+                            <TrendingUp className="w-3 h-3 text-orange-600" />
+                          ) : impact.kitchenImpact.prepTimeChange < 0 ? (
+                            <TrendingDown className="w-3 h-3 text-green-600" />
+                          ) : (
+                            <Minus className="w-3 h-3 text-gray-400" />
+                          )}
+                          <span
+                            className={classNames(
+                              'text-sm font-semibold',
+                              impact.kitchenImpact.prepTimeChange > 0
+                                ? 'text-orange-600'
+                                : impact.kitchenImpact.prepTimeChange < 0
+                                ? 'text-green-600'
+                                : 'text-gray-500'
+                            )}
+                          >
+                            {impact.kitchenImpact.prepTimeChange > 0 ? '+' : ''}
+                            {impact.kitchenImpact.prepTimeChange}分钟
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-orange-600 mt-0.5">
+                          总备餐 {impact.kitchenImpact.totalPrepTimeAfter} 分钟
+                        </div>
+                      </div>
+
+                      {/* 收银余额影响 */}
+                      <div className="bg-green-50 rounded-lg p-2">
+                        <div className="flex items-center gap-1 text-green-700 mb-1">
+                          <Wallet className="w-3 h-3" />
+                          <span className="text-xs font-medium">收银余额</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {impact.financeImpact.direction === 'in' ? (
+                            <TrendingUp className="w-3 h-3 text-green-600" />
+                          ) : impact.financeImpact.direction === 'out' ? (
+                            <TrendingDown className="w-3 h-3 text-red-600" />
+                          ) : (
+                            <Minus className="w-3 h-3 text-gray-400" />
+                          )}
+                          <span
+                            className={classNames(
+                              'text-sm font-semibold',
+                              impact.financeImpact.direction === 'in'
+                                ? 'text-green-600'
+                                : impact.financeImpact.direction === 'out'
+                                ? 'text-red-600'
+                                : 'text-gray-500'
+                            )}
+                          >
+                            {impact.financeImpact.direction === 'in' ? '+' :
+                             impact.financeImpact.direction === 'out' ? '-' : ''}
+                            ¥{impact.financeImpact.amountChange}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-green-600 mt-0.5">
+                          余额 ¥{impact.financeImpact.balanceAfter}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            ))
+            );
+          })
           )}
           </div>
         </div>

@@ -21,6 +21,10 @@ import {
   Send,
   Settings,
   X,
+  UtensilsCrossed,
+  TrendingUp,
+  TrendingDown,
+  Minus,
 } from 'lucide-react';
 
 interface OrderDetailPanelProps {
@@ -81,6 +85,10 @@ export default function OrderDetailPanel({ order, onClose }: OrderDetailPanelPro
     updateOrder,
     createApproval,
     rooms,
+    menuItemStocks,
+    stockLockRecords,
+    calculatePrepTime,
+    getOperationImpacts,
   } = useAppStore();
 
   const [showPeopleModal, setShowPeopleModal] = useState(false);
@@ -290,6 +298,138 @@ export default function OrderDetailPanel({ order, onClose }: OrderDetailPanelPro
             )}
           </div>
         </div>
+
+        {/* 预点菜品 & 库存状态 */}
+        {order.items.length > 0 && (
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <UtensilsCrossed className="w-4 h-4" />
+              预点菜品 & 库存状态
+              <span className="text-xs font-normal text-gray-500 ml-auto">
+                预计备餐: <span className="text-orange-600 font-medium">{calculatePrepTime(order.items)}分钟</span>
+              </span>
+            </h4>
+            <div className="space-y-2">
+              {order.items.map((item) => {
+                const stock = menuItemStocks.find((s) => s.id === item.menuItemId);
+                const lock = stockLockRecords.find(
+                  (l) => l.orderId === order.id && l.menuItemId === item.menuItemId && l.status === 'locked'
+                );
+                return (
+                  <div key={item.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900">{item.name}</span>
+                        <span className="text-xs text-gray-500">× {item.quantity}</span>
+                      </div>
+                      {stock && stock.isStockManaged && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden max-w-[100px]">
+                            <div
+                              className={classNames(
+                                'h-full rounded-full transition-all',
+                                stock.availableStock > stock.warningThreshold
+                                  ? 'bg-green-500'
+                                  : 'bg-red-500'
+                              )}
+                              style={{
+                                width: `${Math.min(100, (stock.availableStock / stock.totalStock) * 100)}%`,
+                              }}
+                            />
+                          </div>
+                          <span className={classNames(
+                            'text-[10px]',
+                            stock.availableStock > stock.warningThreshold
+                              ? 'text-green-600'
+                              : 'text-red-600'
+                          )}>
+                            可用 {stock.availableStock}/{stock.totalStock}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className="text-sm font-medium text-gray-900">
+                        {formatCurrency(item.price * item.quantity)}
+                      </span>
+                      {lock && (
+                        <div className="flex items-center gap-1 justify-end mt-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                          <span className="text-[10px] text-orange-600">库存已锁定</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 三维影响预览 */}
+        {getOperationImpacts(order.id).length > 0 && (
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <Clock3 className="w-4 h-4" />
+              操作影响记录
+              <span className="text-xs font-normal text-gray-500 ml-auto">
+                共 {getOperationImpacts(order.id).length} 条
+              </span>
+            </h4>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {getOperationImpacts(order.id).slice(0, 5).map((impact) => (
+                <div key={impact.operationLogId} className="text-xs p-2 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-gray-900 font-medium">{impact.operationLabel}</span>
+                    <span className="text-gray-400">·</span>
+                    <span className="text-gray-500">{formatDateTime(impact.timestamp)}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="flex items-center gap-1">
+                      <Users className="w-3 h-3 text-blue-500" />
+                      <span className={classNames(
+                        (impact.roomImpact?.peopleChange ?? 0) !== 0
+                          ? (impact.roomImpact?.peopleChange ?? 0) > 0
+                            ? 'text-green-600'
+                            : 'text-red-500'
+                          : 'text-gray-500'
+                      )}>
+                        {(impact.roomImpact?.peopleChange ?? 0) > 0 ? '+' : ''}
+                        {impact.roomImpact?.peopleChange ?? 0}人
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Clock3 className="w-3 h-3 text-orange-500" />
+                      <span className={classNames(
+                        (impact.kitchenImpact?.prepTimeChangeMinutes ?? 0) !== 0
+                          ? (impact.kitchenImpact?.prepTimeChangeMinutes ?? 0) > 0
+                            ? 'text-orange-600'
+                            : 'text-green-600'
+                          : 'text-gray-500'
+                      )}>
+                        {(impact.kitchenImpact?.prepTimeChangeMinutes ?? 0) > 0 ? '+' : ''}
+                        {impact.kitchenImpact?.prepTimeChangeMinutes ?? 0}分
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <DollarSign className="w-3 h-3 text-green-500" />
+                      <span className={classNames(
+                        (impact.financeImpact?.balanceChange ?? 0) !== 0
+                          ? (impact.financeImpact?.balanceChange ?? 0) > 0
+                            ? 'text-green-600'
+                            : 'text-red-500'
+                          : 'text-gray-500'
+                      )}>
+                        {(impact.financeImpact?.balanceChange ?? 0) > 0 ? '+' : ''}
+                        ¥{(impact.financeImpact?.balanceChange ?? 0).toFixed(0)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 金额信息 */}
         <div className="px-6 py-4 border-b border-gray-100">

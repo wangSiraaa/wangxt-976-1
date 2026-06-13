@@ -12,6 +12,10 @@ import type {
   FinanceRecord,
   ExceptionRecord,
   ApprovalRecord,
+  MenuItemStock,
+  StockLockRecord,
+  PeakHourReservation,
+  PrepTimelineNode,
 } from '../types';
 import { addMinutes } from './utils';
 
@@ -435,5 +439,127 @@ export const mockApprovalRecords: ApprovalRecord[] = [
     reason: '顾客路上堵车，要求延长保留30分钟',
     createdAt: addMinutes(now, -5),
     extraData: { extendMinutes: 30 },
+  },
+];
+
+export const mockMenuItemStocks: MenuItemStock[] = [
+  { menuItemId: 'm001', name: '北京烤鸭', category: '招牌菜', totalStock: 20, lockedStock: 5, availableStock: 15, unit: '份', warningThreshold: 5, prepTimeMinutes: 45, isStockManaged: true },
+  { menuItemId: 'm002', name: '佛跳墙', category: '招牌菜', totalStock: 10, lockedStock: 3, availableStock: 7, unit: '份', warningThreshold: 3, prepTimeMinutes: 60, isStockManaged: true },
+  { menuItemId: 'm003', name: '清蒸石斑鱼', category: '海鲜', totalStock: 8, lockedStock: 2, availableStock: 6, unit: '条', warningThreshold: 2, prepTimeMinutes: 25, isStockManaged: true },
+  { menuItemId: 'm004', name: '蒜蓉粉丝蒸扇贝', category: '海鲜', totalStock: 50, lockedStock: 10, availableStock: 40, unit: '只', warningThreshold: 10, prepTimeMinutes: 20, isStockManaged: true },
+  { menuItemId: 'm005', name: '红烧肉', category: '家常菜', totalStock: 30, lockedStock: 8, availableStock: 22, unit: '份', warningThreshold: 5, prepTimeMinutes: 40, isStockManaged: true },
+  { menuItemId: 'm006', name: '宫保鸡丁', category: '家常菜', totalStock: 40, lockedStock: 6, availableStock: 34, unit: '份', warningThreshold: 8, prepTimeMinutes: 15, isStockManaged: true },
+  { menuItemId: 'm007', name: '麻婆豆腐', category: '家常菜', totalStock: 50, lockedStock: 4, availableStock: 46, unit: '份', warningThreshold: 10, prepTimeMinutes: 12, isStockManaged: true },
+  { menuItemId: 'm008', name: '时蔬拼盘', category: '素菜', totalStock: 25, lockedStock: 3, availableStock: 22, unit: '份', warningThreshold: 5, prepTimeMinutes: 10, isStockManaged: true },
+  { menuItemId: 'm009', name: '松茸汤', category: '汤类', totalStock: 15, lockedStock: 4, availableStock: 11, unit: '份', warningThreshold: 3, prepTimeMinutes: 30, isStockManaged: true },
+  { menuItemId: 'm010', name: '商务套餐A', category: '套餐', totalStock: 999, lockedStock: 0, availableStock: 999, unit: '份', warningThreshold: 0, prepTimeMinutes: 35, isStockManaged: false },
+  { menuItemId: 'm011', name: '家庭套餐B', category: '套餐', totalStock: 999, lockedStock: 0, availableStock: 999, unit: '份', warningThreshold: 0, prepTimeMinutes: 45, isStockManaged: false },
+  { menuItemId: 'm012', name: '茅台飞天', category: '酒水', totalStock: 5, lockedStock: 1, availableStock: 4, unit: '瓶', warningThreshold: 1, prepTimeMinutes: 2, isStockManaged: true },
+  { menuItemId: 'm013', name: '五粮液', category: '酒水', totalStock: 8, lockedStock: 0, availableStock: 8, unit: '瓶', warningThreshold: 2, prepTimeMinutes: 2, isStockManaged: true },
+  { menuItemId: 'm014', name: '鲜榨果汁', category: '饮品', totalStock: 999, lockedStock: 0, availableStock: 999, unit: '杯', warningThreshold: 0, prepTimeMinutes: 5, isStockManaged: false },
+  { menuItemId: 'm015', name: '水果拼盘', category: '果盘', totalStock: 20, lockedStock: 2, availableStock: 18, unit: '份', warningThreshold: 3, prepTimeMinutes: 8, isStockManaged: true },
+];
+
+export const mockStockLockRecords: StockLockRecord[] = [
+  { id: 'lock-stock-001', orderId: 'order-002', menuItemId: 'm001', menuItemName: '北京烤鸭', quantity: 1, status: 'consumed', lockedAt: addMinutes(now, -20), reason: '消费锁定' },
+  { id: 'lock-stock-002', orderId: 'order-002', menuItemId: 'm005', menuItemName: '红烧肉', quantity: 1, status: 'consumed', lockedAt: addMinutes(now, -20), reason: '消费锁定' },
+  { id: 'lock-stock-003', orderId: 'order-002', menuItemId: 'm014', menuItemName: '鲜榨果汁', quantity: 2, status: 'consumed', lockedAt: addMinutes(now, -20), reason: '消费锁定' },
+  { id: 'lock-stock-004', orderId: 'order-001', menuItemId: 'm002', menuItemName: '佛跳墙', quantity: 2, status: 'locked', lockedAt: addMinutes(now, -10), reason: '预点单锁定' },
+  { id: 'lock-stock-005', orderId: 'order-001', menuItemId: 'm009', menuItemName: '松茸汤', quantity: 4, status: 'locked', lockedAt: addMinutes(now, -10), reason: '预点单锁定' },
+];
+
+export const mockPeakHourReservations: PeakHourReservation[] = [
+  {
+    id: 'peak-001',
+    roomId: 'room-001',
+    roomName: '牡丹厅',
+    date: new Date().toISOString().split('T')[0],
+    startTime: '18:00',
+    endTime: '20:00',
+    reason: '周末晚餐高峰预留',
+    createdBy: 'manager-001',
+    createdAt: addMinutes(now, -1440),
+    isActive: true,
+  },
+  {
+    id: 'peak-002',
+    roomId: 'room-003',
+    roomName: '兰花厅',
+    date: new Date().toISOString().split('T')[0],
+    startTime: '19:00',
+    endTime: '21:00',
+    reason: 'VIP客户预留',
+    createdBy: 'manager-001',
+    createdAt: addMinutes(now, -720),
+    isActive: true,
+  },
+];
+
+function generatePrepTimeline(kitchenOrderId: string, items: OrderItem[], startTime: number): PrepTimelineNode[] {
+  const timeline: PrepTimelineNode[] = [];
+  let currentTime = startTime;
+  
+  items.forEach((item) => {
+    const prepTime = 10 + Math.floor(Math.random() * 15);
+    const cookTime = 15 + Math.floor(Math.random() * 20);
+    const plateTime = 3 + Math.floor(Math.random() * 5);
+    
+    timeline.push({
+      id: `prep-${item.id}-1`,
+      kitchenOrderId,
+      itemId: item.id,
+      itemName: item.name,
+      status: 'prepping',
+      estimatedTime: currentTime,
+      actualTime: currentTime,
+      durationMinutes: prepTime,
+    });
+    
+    timeline.push({
+      id: `prep-${item.id}-2`,
+      kitchenOrderId,
+      itemId: item.id,
+      itemName: item.name,
+      status: 'cooking',
+      estimatedTime: currentTime + prepTime * 60 * 1000,
+      durationMinutes: cookTime,
+    });
+    
+    timeline.push({
+      id: `prep-${item.id}-3`,
+      kitchenOrderId,
+      itemId: item.id,
+      itemName: item.name,
+      status: 'plating',
+      estimatedTime: currentTime + (prepTime + cookTime) * 60 * 1000,
+      durationMinutes: plateTime,
+    });
+    
+    currentTime += (prepTime + cookTime + plateTime) * 60 * 1000;
+  });
+  
+  return timeline;
+}
+
+export const mockEnhancedKitchenOrders: KitchenOrder[] = [
+  {
+    id: 'kitchen-001',
+    orderId: 'order-002',
+    roomId: 'room-002',
+    roomName: '梅花厅',
+    items: [
+      { id: 'item-001', menuItemId: 'm001', name: '北京烤鸭', price: 198, quantity: 1, category: '招牌菜' },
+      { id: 'item-002', menuItemId: 'm005', name: '红烧肉', price: 68, quantity: 1, category: '家常菜' },
+      { id: 'item-003', menuItemId: 'm014', name: '鲜榨果汁', price: 38, quantity: 2, category: '饮品' },
+    ],
+    status: 'preparing',
+    priority: 'normal',
+    createdAt: addMinutes(now, -15),
+    startedAt: addMinutes(now, -12),
+    estimatedReadyTime: addMinutes(now, 20),
+    prepTimeline: generatePrepTimeline('kitchen-001', [
+      { id: 'item-001', menuItemId: 'm001', name: '北京烤鸭', price: 198, quantity: 1, category: '招牌菜' },
+      { id: 'item-002', menuItemId: 'm005', name: '红烧肉', price: 68, quantity: 1, category: '家常菜' },
+    ], addMinutes(now, -12)),
   },
 ];

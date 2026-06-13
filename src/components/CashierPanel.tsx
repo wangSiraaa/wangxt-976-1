@@ -61,6 +61,7 @@ export default function CashierPanel() {
     createInvoice,
     addFinanceRecord,
     calculateOrderAmount,
+    deriveOrderAmountFromFinance,
   } = useAppStore();
 
   const [activeTab, setActiveTab] = useState<'orders' | 'finance'>('orders');
@@ -328,6 +329,68 @@ export default function CashierPanel() {
                         </span>
                       </div>
                     </div>
+
+                    {selectedOrderId && (
+                      <div className="mt-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-4 border border-green-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <ArrowRightLeft className="w-4 h-4 text-green-600" />
+                          <span className="text-sm font-semibold text-green-700">流水推导金额</span>
+                          <span className="text-xs text-green-600 bg-green-100 px-1.5 py-0.5 rounded">实时</span>
+                        </div>
+                        <div className="space-y-1.5 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">定金收入</span>
+                            <span className="text-green-600 font-medium">
+                              +¥{deriveOrderAmountFromFinance(selectedOrderId).depositPaid.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">定金退还</span>
+                            <span className="text-red-500 font-medium">
+                              -¥{deriveOrderAmountFromFinance(selectedOrderId).depositRefunded.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">消费金额</span>
+                            <span className="text-gray-700 font-medium">
+                              ¥{deriveOrderAmountFromFinance(selectedOrderId).consumption.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">优惠抵扣</span>
+                            <span className="text-orange-500 font-medium">
+                              -¥{deriveOrderAmountFromFinance(selectedOrderId).discount.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">迟到费用</span>
+                            <span className="text-orange-600 font-medium">
+                              +¥{deriveOrderAmountFromFinance(selectedOrderId).lateFee.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">取消费用</span>
+                            <span className="text-orange-600 font-medium">
+                              +¥{deriveOrderAmountFromFinance(selectedOrderId).cancelFee.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="pt-2 border-t border-green-200/50 flex justify-between">
+                            <span className="font-medium text-green-800">当前余额</span>
+                            <span className={classNames(
+                              'font-bold',
+                              deriveOrderAmountFromFinance(selectedOrderId).balance >= 0
+                                ? 'text-green-600'
+                                : 'text-red-600'
+                            )}>
+                              ¥{deriveOrderAmountFromFinance(selectedOrderId).balance.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-green-600/70 mt-2">
+                          * 所有金额均由账务流水记录自动推导，确保数据一致性
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   {orderFinance.length > 0 && (

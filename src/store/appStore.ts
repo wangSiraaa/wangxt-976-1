@@ -20,6 +20,10 @@ import type {
   SplitRecord,
   StaffShift,
   InvoiceInfo,
+  MenuItemStock,
+  StockLockRecord,
+  PeakHourReservation,
+  OperationImpact,
 } from '../types';
 import { applyTransition, canTransition, stateTransitions } from '../lib/stateMachine';
 import {
@@ -41,6 +45,10 @@ import {
   mockApprovalRecords,
   mockMenuItems,
   mockStaffShifts,
+  mockMenuItemStocks,
+  mockStockLockRecords,
+  mockPeakHourReservations,
+  mockEnhancedKitchenOrders,
 } from '../lib/mockData';
 
 interface AppState {
@@ -64,6 +72,9 @@ interface AppState {
   splitRecords: SplitRecord[];
   staffShifts: StaffShift[];
   invoices: InvoiceInfo[];
+  menuItemStocks: MenuItemStock[];
+  stockLockRecords: StockLockRecord[];
+  peakHourReservations: PeakHourReservation[];
 
   selectedOrderId: string | null;
   selectedRoomId: string | null;
@@ -187,6 +198,43 @@ interface AppState {
   createKitchenOrder: (orderId: string, items: OrderItem[], priority?: 'normal' | 'urgent') => KitchenOrder | null;
   updateKitchenOrderStatus: (kitchenOrderId: string, status: KitchenOrder['status']) => boolean;
 
+  // 库存管理
+  lockStock: (orderId: string, menuItemId: string, quantity: number, reason: string) => boolean;
+  releaseStock: (orderId: string, menuItemId: string, reason: string) => boolean;
+  releaseAllStockForOrder: (orderId: string, reason: string) => void;
+  consumeStock: (orderId: string, menuItemId: string, quantity: number) => boolean;
+  checkStockAvailable: (menuItemId: string, quantity: number) => boolean;
+
+  // 高峰保留
+  createPeakHourReservation: (data: Omit<PeakHourReservation, 'id' | 'createdBy' | 'createdAt'>) => PeakHourReservation;
+  togglePeakHourReservation: (reservationId: string) => boolean;
+  deletePeakHourReservation: (reservationId: string) => boolean;
+
+  // 从流水推导金额
+  deriveOrderAmountFromFinance: (orderId: string) => {
+    totalIncome: number;
+    totalExpense: number;
+    balance: number;
+    depositPaid: number;
+    depositRefunded: number;
+    consumption: number;
+    discount: number;
+    lateFee: number;
+    cancelFee: number;
+    noShowFee: number;
+  };
+
+  // 计算操作影响（三维时间轴）
+  getOperationImpacts: (orderId: string) => OperationImpact[];
+
+  // 预点单管理
+  addPreOrderItem: (orderId: string, item: Omit<OrderItem, 'id'>) => boolean;
+  removePreOrderItem: (orderId: string, itemId: string) => boolean;
+  updatePreOrderItem: (orderId: string, itemId: string, updates: Partial<OrderItem>) => boolean;
+
+  // 备餐时间计算
+  calculatePrepTime: (items: OrderItem[]) => number;
+
   resetAllData: () => void;
 }
 
@@ -213,6 +261,9 @@ export const useAppStore = create<AppState>()(
       splitRecords: [],
       staffShifts: mockStaffShifts,
       invoices: [],
+      menuItemStocks: mockMenuItemStocks,
+      stockLockRecords: mockStockLockRecords,
+      peakHourReservations: mockPeakHourReservations,
 
       selectedOrderId: null,
       selectedRoomId: null,
@@ -1378,6 +1429,402 @@ export const useAppStore = create<AppState>()(
         return true;
       },
 
+      // 库存管理
+      lockStock: (orderId, menuItemId, quantity, reason) => {
+        const state = get();
+        const stock = state.menuItemStocks.find((s) => s.menuItemId === menuItemId);
+        if (!stock || !stock.isStockManaged) return true;
+        if (stock.availableStock < quantity) {
+          state.addException(
+            'system_error',
+            'medium',
+            `${stock.name}库存不足，需要${quantity}${stock.unit}，仅剩${stock.availableStock}${stock.unit}`,
+            orderId
+          );
+          return false;
+        }
+
+        const lockRecord: StockLockRecord = {
+          id: generateId('stock-lock-'),
+          orderId,
+          menuItemId,
+          menuItemName: stock.name,
+          quantity,
+          status: 'locked',
+          lockedAt: Date.now(),
+          reason,
+        };
+
+        set((s) => ({
+          menuItemStocks: s.menuItemStocks.map((st) =>
+            st.menuItemId === menuItemId
+              ? {
+                  ...st,
+                  lockedStock: st.lockedStock + quantity,
+                  availableStock: st.availableStock - quantity,
+                }
+              : st
+          ),
+          stockLockRecords: [...s.stockLockRecords, lockRecord],
+        }));
+
+        return true;
+      },
+
+      releaseStock: (orderId, menuItemId, reason) => {
+        const state = get();
+        const lockRecords = state.stockLockRecords.filter(
+          (l) => l.orderId === orderId && l.menuItemId === menuItemId && l.status === 'locked'
+        );
+        if (lockRecords.length === 0) return false;
+
+        const totalQuantity = lockRecords.reduce((sum, r) => sum + r.quantity, 0);
+
+        set((s) => ({
+          menuItemStocks: s.menuItemStocks.map((st) =>
+            st.menuItemId === menuItemId
+              ? {
+                  ...st,
+                  lockedStock: Math.max(0, st.lockedStock - totalQuantity),
+                  availableStock: st.availableStock + totalQuantity,
+                }
+              : st
+          ),
+          stockLockRecords: s.stockLockRecords.map((l) =>
+            l.orderId === orderId && l.menuItemId === menuItemId && l.status === 'locked'
+              ? { ...l, status: 'released', releasedAt: Date.now(), reason: `${l.reason} - ${reason}` }
+              : l
+          ),
+        }));
+
+        return true;
+      },
+
+      releaseAllStockForOrder: (orderId, reason) => {
+        const state = get();
+        const lockRecords = state.stockLockRecords.filter(
+          (l) => l.orderId === orderId && l.status === 'locked'
+        );
+
+        const stockChanges: Record<string, number> = {};
+        lockRecords.forEach((r) => {
+          stockChanges[r.menuItemId] = (stockChanges[r.menuItemId] || 0) + r.quantity;
+        });
+
+        set((s) => ({
+          menuItemStocks: s.menuItemStocks.map((st) => {
+            const qty = stockChanges[st.menuItemId] || 0;
+            if (qty === 0) return st;
+            return {
+              ...st,
+              lockedStock: Math.max(0, st.lockedStock - qty),
+              availableStock: st.availableStock + qty,
+            };
+          }),
+          stockLockRecords: s.stockLockRecords.map((l) =>
+            l.orderId === orderId && l.status === 'locked'
+              ? { ...l, status: 'released', releasedAt: Date.now(), reason: `${l.reason} - ${reason}` }
+              : l
+          ),
+        }));
+      },
+
+      consumeStock: (orderId, menuItemId, quantity) => {
+        const state = get();
+        const lockRecords = state.stockLockRecords.filter(
+          (l) => l.orderId === orderId && l.menuItemId === menuItemId && l.status === 'locked'
+        );
+
+        set((s) => ({
+          menuItemStocks: s.menuItemStocks.map((st) =>
+            st.menuItemId === menuItemId
+              ? {
+                  ...st,
+                  totalStock: Math.max(0, st.totalStock - quantity),
+                  lockedStock: Math.max(0, st.lockedStock - quantity),
+                }
+              : st
+          ),
+          stockLockRecords: s.stockLockRecords.map((l) =>
+            l.orderId === orderId && l.menuItemId === menuItemId && l.status === 'locked'
+              ? { ...l, status: 'consumed' }
+              : l
+          ),
+        }));
+
+        return true;
+      },
+
+      checkStockAvailable: (menuItemId, quantity) => {
+        const state = get();
+        const stock = state.menuItemStocks.find((s) => s.menuItemId === menuItemId);
+        if (!stock) return false;
+        if (!stock.isStockManaged) return true;
+        return stock.availableStock >= quantity;
+      },
+
+      // 高峰保留
+      createPeakHourReservation: (data) => {
+        const state = get();
+        const reservation: PeakHourReservation = {
+          ...data,
+          id: generateId('peak-'),
+          createdBy: state.currentUserId,
+          createdAt: Date.now(),
+        };
+
+        set((s) => ({
+          peakHourReservations: [...s.peakHourReservations, reservation],
+        }));
+
+        return reservation;
+      },
+
+      togglePeakHourReservation: (reservationId) => {
+        set((s) => ({
+          peakHourReservations: s.peakHourReservations.map((r) =>
+            r.id === reservationId ? { ...r, isActive: !r.isActive } : r
+          ),
+        }));
+        return true;
+      },
+
+      deletePeakHourReservation: (reservationId) => {
+        set((s) => ({
+          peakHourReservations: s.peakHourReservations.filter((r) => r.id !== reservationId),
+        }));
+        return true;
+      },
+
+      // 从流水推导金额
+      deriveOrderAmountFromFinance: (orderId) => {
+        const state = get();
+        const records = state.financeRecords.filter((r) => r.orderId === orderId);
+
+        let totalIncome = 0;
+        let totalExpense = 0;
+        let depositPaid = 0;
+        let depositRefunded = 0;
+        let consumption = 0;
+        let discount = 0;
+        let lateFee = 0;
+        let cancelFee = 0;
+        let noShowFee = 0;
+
+        records.forEach((record) => {
+          if (record.direction === 'in') {
+            totalIncome += record.amount;
+          } else {
+            totalExpense += record.amount;
+          }
+
+          switch (record.type) {
+            case 'deposit_pay':
+              depositPaid += record.amount;
+              break;
+            case 'deposit_refund':
+              depositRefunded += record.amount;
+              break;
+            case 'consumption':
+              consumption += record.amount;
+              break;
+            case 'coupon_discount':
+            case 'member_discount':
+              discount += record.amount;
+              break;
+            case 'late_charge':
+              lateFee += record.amount;
+              break;
+            case 'cancel_charge':
+              cancelFee += record.amount;
+              break;
+            case 'no_show_charge':
+              noShowFee += record.amount;
+              break;
+          }
+        });
+
+        const balance = totalIncome - totalExpense;
+
+        return {
+          totalIncome,
+          totalExpense,
+          balance,
+          depositPaid,
+          depositRefunded,
+          consumption,
+          discount,
+          lateFee,
+          cancelFee,
+          noShowFee,
+        };
+      },
+
+      // 计算操作影响（三维时间轴）
+      getOperationImpacts: (orderId) => {
+        const state = get();
+        const order = state.orders.find((o) => o.id === orderId);
+        if (!order) return [];
+
+        const logs = state.operationLogs
+          .filter((l) => l.orderId === orderId)
+          .sort((a, b) => a.timestamp - b.timestamp);
+
+        const room = state.rooms.find((r) => r.id === order.roomId);
+        const stockLocks = state.stockLockRecords.filter((l) => l.orderId === orderId);
+
+        let runningCapacity = room ? room.capacity : 0;
+        let runningPrepTime = 0;
+        let runningBalance = 0;
+
+        const impacts: OperationImpact[] = logs.map((log) => {
+          let capacityChange = 0;
+          let prepTimeChange = 0;
+          let amountChange = 0;
+          let direction: 'in' | 'out' | 'neutral' = 'neutral';
+
+          // 包厢容量影响
+          if (log.type === 'create_order' || log.type === 'transfer_order') {
+            capacityChange = -order.peopleCount;
+          } else if (log.type === 'cancel_order' || log.type === 'abnormal_release') {
+            capacityChange = order.peopleCount;
+          } else if (log.type === 'update_people' && log.beforeData && log.afterData) {
+            const before = (log.beforeData as { peopleCount: number }).peopleCount || 0;
+            const after = (log.afterData as { peopleCount: number }).peopleCount || 0;
+            capacityChange = before - after;
+          } else if (log.type === 'arrive_confirm') {
+            capacityChange = 0;
+          } else if (log.type === 'consumption_confirm' && log.beforeData) {
+            const beforeStatus = (log.beforeData as { status: string }).status;
+            if (beforeStatus === 'consuming') {
+              capacityChange = order.peopleCount;
+            }
+          }
+
+          runningCapacity += capacityChange;
+
+          // 厨房备餐影响
+          const itemLocks = stockLocks.filter((l) => l.lockedAt <= log.timestamp + 1000);
+          const totalPrepTime = itemLocks.reduce((sum, lock) => {
+            const stockItem = state.menuItemStocks.find((s) => s.menuItemId === lock.menuItemId);
+            return sum + (stockItem?.prepTimeMinutes || 15) * lock.quantity;
+          }, 0);
+          prepTimeChange = totalPrepTime - runningPrepTime;
+          runningPrepTime = totalPrepTime;
+
+          // 收银余额影响
+          const financeRecords = state.financeRecords.filter(
+            (f) => f.orderId === orderId && f.timestamp <= log.timestamp + 1000
+          );
+          const totalIn = financeRecords.filter((f) => f.direction === 'in').reduce((sum, f) => sum + f.amount, 0);
+          const totalOut = financeRecords.filter((f) => f.direction === 'out').reduce((sum, f) => sum + f.amount, 0);
+          const newBalance = totalIn - totalOut;
+          amountChange = newBalance - runningBalance;
+          runningBalance = newBalance;
+
+          if (amountChange > 0) direction = 'in';
+          else if (amountChange < 0) direction = 'out';
+
+          return {
+            operationLogId: log.id,
+            orderId,
+            timestamp: log.timestamp,
+            operationType: log.type,
+            operatorName: log.operatorName,
+            operatorRole: log.operatorRole,
+            remark: log.remark,
+            roomImpact: {
+              roomId: order.roomId,
+              roomName: order.roomName,
+              capacityChange,
+              capacityAfter: runningCapacity,
+            },
+            kitchenImpact: {
+              prepTimeChange,
+              totalPrepTimeAfter: runningPrepTime,
+            },
+            financeImpact: {
+              amountChange: Math.abs(amountChange),
+              balanceAfter: runningBalance,
+              direction,
+            },
+          } as OperationImpact;
+        });
+
+        return impacts;
+      },
+
+      // 预点单管理
+      addPreOrderItem: (orderId, item) => {
+        const state = get();
+        const order = state.orders.find((o) => o.id === orderId);
+        if (!order) return false;
+
+        if (!state.checkStockAvailable(item.menuItemId, item.quantity)) {
+          return false;
+        }
+
+        const success = state.addOrderItem(orderId, item);
+        if (!success) return false;
+
+        state.lockStock(orderId, item.menuItemId, item.quantity, '预点单锁定');
+
+        return true;
+      },
+
+      removePreOrderItem: (orderId, itemId) => {
+        const state = get();
+        const order = state.orders.find((o) => o.id === orderId);
+        if (!order) return false;
+
+        const item = order.items.find((i) => i.id === itemId);
+        if (item) {
+          state.releaseStock(orderId, item.menuItemId, '取消预点单');
+        }
+
+        return state.removeOrderItem(orderId, itemId);
+      },
+
+      updatePreOrderItem: (orderId, itemId, updates) => {
+        const state = get();
+        const order = state.orders.find((o) => o.id === orderId);
+        if (!order) return false;
+
+        const item = order.items.find((i) => i.id === itemId);
+        if (!item) return false;
+
+        if (updates.quantity && updates.quantity !== item.quantity) {
+          const diff = updates.quantity - item.quantity;
+          if (diff > 0) {
+            if (!state.checkStockAvailable(item.menuItemId, diff)) {
+              return false;
+            }
+            state.lockStock(orderId, item.menuItemId, diff, '预点单加量');
+          } else {
+            state.releaseStock(orderId, item.menuItemId, '预点单减量');
+          }
+        }
+
+        return state.updateOrderItem(orderId, itemId, updates);
+      },
+
+      // 备餐时间计算
+      calculatePrepTime: (items) => {
+        const state = get();
+        let totalTime = 0;
+
+        items.forEach((item) => {
+          const stock = state.menuItemStocks.find((s) => s.menuItemId === item.menuItemId);
+          if (stock) {
+            totalTime = Math.max(totalTime, stock.prepTimeMinutes * item.quantity);
+          } else {
+            totalTime = Math.max(totalTime, 20 * item.quantity);
+          }
+        });
+
+        return Math.max(10, totalTime);
+      },
+
       resetAllData: () => {
         set({
           rooms: mockRooms,
@@ -1395,6 +1842,9 @@ export const useAppStore = create<AppState>()(
           splitRecords: [],
           staffShifts: mockStaffShifts,
           invoices: [],
+          menuItemStocks: mockMenuItemStocks,
+          stockLockRecords: mockStockLockRecords,
+          peakHourReservations: mockPeakHourReservations,
         });
       },
     }),
