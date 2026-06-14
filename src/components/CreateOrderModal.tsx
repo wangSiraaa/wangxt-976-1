@@ -1,6 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { classNames, formatCurrency, formatDateTime, getTimeSlotsForDay } from '@/lib/utils';
+import {
+  classNames,
+  formatCurrency,
+  formatDateTime,
+  getTimeSlotsForRoomAndDate,
+  getDayLabel,
+  isTimeInPast,
+  isSameDay,
+} from '@/lib/utils';
 import Modal from './Modal';
 import type { Room } from '@/types';
 import {
@@ -13,6 +21,9 @@ import {
   CheckCircle2,
   Loader2,
   Info,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
 } from 'lucide-react';
 
 interface CreateOrderModalProps {
@@ -28,12 +39,13 @@ export default function CreateOrderModal({
   defaultRoomId,
   defaultStartTime,
 }: CreateOrderModalProps) {
-  const { rooms, createOrder, checkRoomAvailable, currentRole, currentUserName } = useAppStore();
+  const { rooms, createOrder, checkRoomAvailable, currentRole, currentUserName, lockRecords } = useAppStore();
 
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [peopleCount, setPeopleCount] = useState(4);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [startTime, setStartTime] = useState<number>(0);
   const [duration, setDuration] = useState(120);
   const [remark, setRemark] = useState('');
@@ -41,13 +53,23 @@ export default function CreateOrderModal({
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [availabilityOk, setAvailabilityOk] = useState<boolean | null>(null);
+  const [lockConflict, setLockConflict] = useState<boolean>(false);
 
   useEffect(() => {
     if (isOpen) {
-      setSelectedRoomId(defaultRoomId || rooms[0]?.id || '');
-      const now = Date.now();
-      const rounded = Math.ceil(now / 1800000) * 1800000;
-      setStartTime(defaultStartTime || rounded);
+      const firstAvailableRoom = rooms.find((r) => r.status !== 'maintenance');
+      setSelectedRoomId(defaultRoomId || firstAvailableRoom?.id || '');
+      
+      const today = new Date();
+      setSelectedDate(today);
+      
+      if (defaultStartTime) {
+        setStartTime(defaultStartTime);
+        setSelectedDate(new Date(defaultStartTime));
+      } else {
+        setStartTime(0);
+      }
+      
       setCustomerName(currentRole === 'customer' ? currentUserName : '');
       setCustomerPhone('');
       setPeopleCount(4);
@@ -55,25 +77,94 @@ export default function CreateOrderModal({
       setRemark('');
       setError('');
       setAvailabilityOk(null);
+      setLockConflict(false);
     }
   }, [isOpen, defaultRoomId, defaultStartTime, rooms, currentRole, currentUserName]);
 
   const selectedRoom = rooms.find((r) => r.id === selectedRoomId);
   const endTime = startTime ? startTime + duration * 60 * 1000 : 0;
 
+  const timeSlots = useMemo(() => {
+    if (!selectedRoom) return [];
+    return getTimeSlotsForRoomAndDate(selectedRoom.bookableSlots, selectedDate, 30);
+  }, [selectedRoom, selectedDate]);
+
+  const dateOptions = useMemo(() => {
+    const dates: Date[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(today);
+      date.setDate(today.getDate() + i);
+      dates.push(date);
+    }
+    return dates;
+  }, []);
+
   useEffect(() => {
     if (!selectedRoomId || !startTime) return;
+    
     setChecking(true);
     setAvailabilityOk(null);
+    setLockConflict(false);
+    
     const timer = setTimeout(() => {
-      const ok = checkRoomAvailable(selectedRoomId, startTime, startTime + duration * 60 * 1000);
+      const end = startTime + duration * 60 * 1000;
+      const ok = checkRoomAvailable(selectedRoomId, startTime, end);
       setAvailabilityOk(ok);
+      
+      const hasLockConflict = lockRecords.some(
+        (lock) =>
+          lock.roomId === selectedRoomId &&
+          lock.endTime > Date.now() &&
+          startTime < lock.endTime &&
+          end > lock.startTime
+      );
+      setLockConflict(hasLockConflict);
+      
       setChecking(false);
     }, 200);
+    
     return () => clearTimeout(timer);
-  }, [selectedRoomId, startTime, duration, checkRoomAvailable]);
+  }, [selectedRoomId, startTime, duration, checkRoomAvailable, lockRecords]);
 
-  const timeSlots = getTimeSlotsForDay('11:00', '22:00', 30);
+  useEffect(() => {
+    if (timeSlots.length > 0 && !startTime) {
+      const firstAvailable = timeSlots.find((slot) => !isTimeInPast(slot.value));
+      if (firstAvailable) {
+        setStartTime(firstAvailable.value);
+      } else if (timeSlots.length > 0 && !isSameDay(selectedDate.getTime(), Date.now())) {
+        setStartTime(timeSlots[0].value);
+      }
+    }
+  }, [timeSlots, startTime, selectedDate]);
+
+  const handleDateChange = (date: Date) => {
+    setSelectedDate(date);
+    setStartTime(0);
+    setAvailabilityOk(null);
+    setLockConflict(false);
+  };
+
+  const handlePrevDay = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (selectedDate.getTime() > today.getTime()) {
+      const prevDate = new Date(selectedDate);
+      prevDate.setDate(prevDate.getDate() - 1);
+      handleDateChange(prevDate);
+    }
+  };
+
+  const handleNextDay = () => {
+    const nextDate = new Date(selectedDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + 6);
+    if (nextDate <= maxDate) {
+      handleDateChange(nextDate);
+    }
+  };
 
   const handleSubmit = async () => {
     setError('');
@@ -98,8 +189,16 @@ export default function CreateOrderModal({
       setError(`人数超过包厢容量（最大${selectedRoom.capacity}人）`);
       return;
     }
+    if (lockConflict) {
+      setError('该时间段包厢被锁定，请选择其他时间或联系管理员');
+      return;
+    }
     if (!availabilityOk) {
       setError('该时间段已被预订，请选择其他时间或包厢');
+      return;
+    }
+    if (isTimeInPast(startTime)) {
+      setError('预订时间不能早于当前时间');
       return;
     }
 
@@ -129,6 +228,8 @@ export default function CreateOrderModal({
 
   const availableRooms = rooms.filter((r) => r.status !== 'maintenance');
 
+  const isToday = isSameDay(selectedDate.getTime(), Date.now());
+
   return (
     <Modal
       isOpen={isOpen}
@@ -156,7 +257,7 @@ export default function CreateOrderModal({
             </button>
             <button
               onClick={handleSubmit}
-              disabled={loading || !availabilityOk}
+              disabled={loading || !availabilityOk || lockConflict}
               className="px-5 py-2.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {loading ? (
@@ -190,7 +291,12 @@ export default function CreateOrderModal({
                 key={room.id}
                 room={room}
                 selected={selectedRoomId === room.id}
-                onClick={() => setSelectedRoomId(room.id)}
+                onClick={() => {
+                  setSelectedRoomId(room.id);
+                  setStartTime(0);
+                  setAvailabilityOk(null);
+                  setLockConflict(false);
+                }}
               />
             ))}
           </div>
@@ -282,39 +388,90 @@ export default function CreateOrderModal({
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             <Calendar className="w-4 h-4 inline mr-1" />
-            预订时间 <span className="text-red-500">*</span>
+            预订日期 <span className="text-red-500">*</span>
           </label>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="flex-1">
-              <p className="text-xs text-gray-500 mb-1.5">开始时间</p>
-              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-2 bg-gray-50 rounded-lg">
-                {timeSlots.map((slot) => {
-                  const isSelected = startTime === slot.value;
-                  const isPast = slot.value < Date.now();
-                  return (
-                    <button
-                      key={slot.value}
-                      type="button"
-                      disabled={isPast}
-                      onClick={() => setStartTime(slot.value)}
-                      className={classNames(
-                        'px-3 py-1.5 text-xs rounded-md transition-colors',
-                        isPast
-                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                          : isSelected
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-white border border-gray-200 text-gray-700 hover:border-orange-300 hover:text-orange-600'
-                      )}
-                    >
-                      {slot.label}
-                    </button>
-                  );
-                })}
-              </div>
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              type="button"
+              onClick={handlePrevDay}
+              disabled={isToday}
+              className="w-8 h-8 rounded-md border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="flex-1 flex gap-1.5 overflow-x-auto pb-1">
+              {dateOptions.map((date) => {
+                const isSelected = isSameDay(date.getTime(), selectedDate.getTime());
+                const isPast = date < new Date(new Date().setHours(0, 0, 0, 0));
+                return (
+                  <button
+                    key={date.getTime()}
+                    type="button"
+                    onClick={() => handleDateChange(date)}
+                    disabled={isPast}
+                    className={classNames(
+                      'flex-shrink-0 px-3 py-2 rounded-lg text-xs transition-colors min-w-[60px]',
+                      isPast
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : isSelected
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-white border border-gray-200 text-gray-700 hover:border-orange-300 hover:text-orange-600'
+                    )}
+                  >
+                    <div className="font-medium">{getDayLabel(date)}</div>
+                    <div className="text-[10px] opacity-80">
+                      {date.getMonth() + 1}/{date.getDate()}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
+            <button
+              type="button"
+              onClick={handleNextDay}
+              disabled={selectedDate.getTime() >= dateOptions[dateOptions.length - 1].getTime()}
+              className="w-8 h-8 rounded-md border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            <Clock className="w-4 h-4 inline mr-1" />
+            开始时间 <span className="text-red-500">*</span>
+          </label>
+          <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2 bg-gray-50 rounded-lg">
+            {timeSlots.length === 0 ? (
+              <p className="text-sm text-gray-500 px-2 py-3">该日期暂无可预订时段</p>
+            ) : (
+              timeSlots.map((slot) => {
+                const isSelected = startTime === slot.value;
+                const isPast = isToday && isTimeInPast(slot.value);
+                return (
+                  <button
+                    key={slot.value}
+                    type="button"
+                    disabled={isPast}
+                    onClick={() => setStartTime(slot.value)}
+                    className={classNames(
+                      'px-3 py-1.5 text-xs rounded-md transition-colors',
+                      isPast
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : isSelected
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-white border border-gray-200 text-gray-700 hover:border-orange-300 hover:text-orange-600'
+                    )}
+                  >
+                    {slot.label}
+                  </button>
+                );
+              })
+            )}
           </div>
           {startTime && (
-            <div className="flex items-center gap-2 text-sm text-gray-600 bg-blue-50 px-3 py-2 rounded-lg">
+            <div className="flex items-center gap-2 text-sm text-gray-600 bg-blue-50 px-3 py-2 rounded-lg mt-2">
               <Info className="w-4 h-4 text-blue-500" />
               <span>
                 预订时段: {formatDateTime(startTime)} - {formatDateTime(endTime)}
@@ -323,6 +480,11 @@ export default function CreateOrderModal({
                 <span className="ml-auto flex items-center gap-1 text-gray-500">
                   <Loader2 className="w-3 h-3 animate-spin" />
                   检查中
+                </span>
+              ) : lockConflict ? (
+                <span className="ml-auto flex items-center gap-1 text-orange-600">
+                  <Lock className="w-4 h-4" />
+                  已被锁定
                 </span>
               ) : availabilityOk === true ? (
                 <span className="ml-auto flex items-center gap-1 text-green-600">
