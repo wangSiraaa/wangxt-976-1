@@ -196,7 +196,7 @@ export const mockOrders: Order[] = [
     minConsumption: 800,
     depositAmount: 200,
     depositPaid: true,
-    depositPaidAt: addMinutes(now, -120),
+    depositPaidAt: addMinutes(now, -118),
     status: 'confirmed',
     items: [],
     totalAmount: 0,
@@ -384,7 +384,7 @@ export const mockOperationLogs: OperationLog[] = [
     operatorId: 'cashier-001',
     operatorName: '收银小李',
     operatorRole: 'cashier',
-    timestamp: addMinutes(now, -120),
+    timestamp: addMinutes(now, -118),
     remark: '微信支付定金200元',
   },
 ];
@@ -399,7 +399,7 @@ export const mockFinanceRecords: FinanceRecord[] = [
     paymentMethod: 'wechat',
     operatorId: 'cashier-001',
     operatorName: '收银小李',
-    timestamp: addMinutes(now, -120),
+    timestamp: addMinutes(now, -118),
     remark: '定金支付',
   },
   {
